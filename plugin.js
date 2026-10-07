@@ -2,12 +2,10 @@ const BASE_URL = "https://sololatino.net";
 
 /**
  * Busca películas y series en SoloLatino.
- * @param {string} query
  */
 export async function search(query) {
   const searchUrl = `${BASE_URL}/?s=${encodeURIComponent(query || "")}`;
   
-  // En Kino TV no existe 'fetch' global, se usa 'kino.fetch'
   const response = await kino.fetch(searchUrl, {
     headers: {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -21,27 +19,42 @@ export async function search(query) {
 
   const html = await response.text();
   const results = [];
-  const itemRegex = /<article[^>]*class="[^"]*item[^"]*"[^>]*>([\s\S]*?)<\/article>/gi;
+  const seenUrls = new Set();
+
+  // Búsqueda flexible de enlaces con imagen/título dentro del HTML
+  const linkRegex = /<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
   let match;
 
-  while ((match = itemRegex.exec(html)) !== null) {
-    const itemHtml = match[1];
-    const linkMatch = /href="([^"]+)"/i.exec(itemHtml);
-    const titleMatch = /<h3[^>]*>([\s\S]*?)<\/h3>/i.exec(itemHtml) || /alt="([^"]+)"/i.exec(itemHtml);
-    const imgMatch = /src="([^"]+)"/i.exec(itemHtml) || /data-src="([^"]+)"/i.exec(itemHtml);
+  while ((match = linkRegex.exec(html)) !== null) {
+    const itemUrl = match[1];
+    const innerHtml = match[2];
 
-    if (linkMatch && titleMatch) {
-      const itemUrl = linkMatch[1];
-      const title = titleMatch[1].replace(/<[^>]+>/g, "").trim();
-      const poster = imgMatch ? imgMatch[1] : "";
-      const isTv = itemUrl.includes("/tvshows/") || itemUrl.includes("/series/");
+    // Validar enlaces relevantes de películas, series o animes
+    const isContent = itemUrl.includes("/peliculas/") || 
+                      itemUrl.includes("/series/") || 
+                      itemUrl.includes("/tvshows/") || 
+                      itemUrl.includes("/animes/");
 
-      results.push({
-        id: itemUrl,
-        title: title,
-        poster: poster,
-        type: isTv ? "tv" : "movie"
-      });
+    if (isContent && !seenUrls.has(itemUrl)) {
+      const imgMatch = /src="([^"]+)"/i.exec(innerHtml) || /data-src="([^"]+)"/i.exec(innerHtml);
+      const titleMatch = /<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i.exec(innerHtml) || 
+                         /alt="([^"]+)"/i.exec(innerHtml) || 
+                         /title="([^"]+)"/i.exec(innerHtml);
+
+      const title = titleMatch ? titleMatch[1].replace(/<[^>]+>/g, "").trim() : "";
+      
+      if (title) {
+        seenUrls.add(itemUrl);
+        const poster = imgMatch ? imgMatch[1] : "";
+        const isTv = itemUrl.includes("/series/") || itemUrl.includes("/tvshows/") || itemUrl.includes("/animes/");
+
+        results.push({
+          id: itemUrl,
+          title: title,
+          poster: poster,
+          type: isTv ? "tv" : "movie"
+        });
+      }
     }
   }
 
@@ -50,7 +63,6 @@ export async function search(query) {
 
 /**
  * Resuelve las fuentes y enlaces de reproducción/descarga.
- * @param {string} id
  */
 export async function resolve(id) {
   const targetUrl = id.startsWith("http") ? id : `${BASE_URL}/${id}`;
@@ -78,7 +90,6 @@ export async function resolve(id) {
       embedUrl = "https:" + embedUrl;
     }
 
-    // Filtrar scripts sociales o no relacionados
     if (embedUrl.includes("facebook") || embedUrl.includes("twitter") || embedUrl.includes("disqus")) {
       continue;
     }
